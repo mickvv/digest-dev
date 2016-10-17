@@ -6,7 +6,8 @@ use autodie;
 use Smart::Comments;
 use Getopt::Euclid qw( :vars );
 
-use Tie::IxHash;
+use Tie::IxHash::Easy;
+use File::Basename;
 use File::Find::Rule;
 use Path::Class 'file', 'dir';
 use List::AllUtils 'max', 'firstidx';
@@ -36,7 +37,7 @@ open my $in, '<', file($ARGV_otu_file);
 my @categories;
 
 while ( my $line = <$in> ) {    
-    
+    chomp $line;
     ### $line
     my ($label, $otu) = split ':', $line;
     my $list = IdList->new( ids => [ split ',', $otu ] );
@@ -70,44 +71,120 @@ my @blast_reports = File::Find::Rule
 ### @blast_reports
 
 ### Processing blast reports...
-my %best_hit_for;
-my %low_hits_for;
-
 for my $file (sort @blast_reports) {
     ### Processing: $file
-    
+
     my $report = Table->new( file => file($file) );
     my $method = 'next_hit';
+    
+    my %best_for;
+    tie my %best_hit_for, 'Tie::IxHash::Easy';
+    tie my %low_hits_for, 'Tie::IxHash::Easy';
+#    my $curr_query;
+#    my $curr_org;
 
-    my $curr_query;
-    my $curr_org;
-
+    # Parse table and store best hit for a query_org/hit_org pair in a hash
+    # and the remaining low scoring hits in another hash
     HIT:
     while ( my $hit = $report->$method ) {
-     
-        $curr_query = $hit->query_id;
-        $curr_org   = $hit->hit_id;
+
+        my $query_id = $hit->query_id;
+        my $hit_id   = $hit->hit_id;
+        ### $query_id
+        ### $hit_id
+        ### eval: $hit->evalue
         
         # skip when hit is myself    
-        my ( $query_id, $hit_id ) = map { SeqId->new( full_id => $_ ) } $curr_query, $curr_org;
-        next if $query_id->taxon_id eq $hit_id->taxon_id;
+        my ( $query_taxid, $hit_taxid ) = map { $_->taxon_id } 
+                                          map { SeqId->new( full_id => $_ ) } $query_id, $hit_id
+                                          ;
+        next if $query_taxid eq $hit_taxid;
      
-        my $group = $classifier->classify($curr_org) // 'others';
+        my $group = $classifier->classify($hit_id) // 'others';
         
-        if ( $best_hit_for{$curr_query}{$curr_org}{$group} ) {
-            $low_hits_for{$curr_query}{$curr_org}{$group} = $hit;
+        unless ( $best_for{$query_id}{$hit_taxid} ) {
+
+            $best_hit_for{$query_id}{$hit_taxid}{hit_id} = $hit_id;
+            $best_hit_for{$query_id}{$hit_taxid}{group}  = $group;
+            $best_hit_for{$query_id}{$hit_taxid}{hit}    = $hit;
+
+            $best_for{$query_id}{$hit_taxid} = 1;
             next HIT;
         }
-     
-        $best_hit_for{$curr_query}{$curr_org}{$group} = $hit;
+
+        $low_hits_for{$query_id}{$hit_taxid}{$hit_id}{group} = $group;
+        $low_hits_for{$query_id}{$hit_taxid}{$hit_id}{hit}   = $hit;
         next HIT;
     }
+
+    my $basefile      = basename($file);
+    my $outfile_best  = change_suffix($basefile, '.best');
+    my $outfile_lows  = change_suffix($basefile, '.lows');
+    my $outfile_delta = change_suffix($basefile, '.delta');
+    ### $outfile_best 
+    
+    # Write table for the best scoring hits
+    open my $out_best, '>', $outfile_best;
+    for my $query_id (keys %best_hit_for) {
+        for my $hit_taxid (keys %{ $best_hit_for{$query_id} }) {
+
+            my $hit_id = $best_hit_for{$query_id}{$hit_taxid}{hit_id};
+            my $group  = $best_hit_for{$query_id}{$hit_taxid}{group};
+            my $hit    = $best_hit_for{$query_id}{$hit_taxid}{hit};
+
+	        my @hit_values = map { $hit-> $_ } qw(evalue percent_identity hsp_length);
+
+            say {$out_best} join "\t", $query_id, @hit_values, $hit_id, $group;
+        }
+    }
+    close $out_best;
+
+    # Write table for low scoring hits
+    open my $out_lows, '>', $outfile_lows;
+    for my $query_id (keys %low_hits_for) {
+        for my $hit_taxid (keys %{ $low_hits_for{$query_id} }) {
+            for my $hit_id (keys %{ $low_hits_for{$query_id}{$hit_taxid} }) {
+             
+                my $group  = $low_hits_for{$query_id}{$hit_taxid}{$hit_id}{group};
+                my $hit    = $low_hits_for{$query_id}{$hit_taxid}{$hit_id}{hit}; 
+
+	            my @hit_values = map { $hit-> $_ } qw(evalue percent_identity hsp_length);
+
+                say {$out_lows} join "\t", $query_id, @hit_values, $hit_id, $group;
+            }
+        }
+    }
+    close $out_lows;
+
+    # Write table for the best scoring hits
+    open my $out_delta, '>', $outfile_delta;
+    for my $query_id (keys %best_hit_for) {
+        HIT_ID:
+        for my $hit_taxid (keys %{ $best_hit_for{$query_id} }) {
+
+            my $group  = $best_hit_for{$query_id}{$hit_taxid}{group};
+            next HIT_ID if $group =~ m/^!/xmsg;
+
+            my $hit_id = $best_hit_for{$query_id}{$hit_taxid}{hit_id};
+            my $hit    = $best_hit_for{$query_id}{$hit_taxid}{hit};
+
+	        my @hit_values = map { $hit-> $_ } qw(evalue percent_identity hsp_length);
+
+            say {$out_delta} join "\t", $query_id, @hit_values, $hit_id, $group;
+        }
+    }
+    close $out_delta;
+
+#    ### %best_hit_for
+#    ### %low_hits_for
     ### Done processing: $file
 }
 ### Done processing all reports
 
-### %best_hit_for
-### %low_hits_for
+sub comp_delta { 
+   my ($a, $b) = @_;
+   return $a-$b; 
+}
 
 =head1 NAME
 
