@@ -1,0 +1,8 @@
+!sar:+Stramenopiles,+Alveolata,+Rhizaria
+!plantae:+Rhodophyta,+Viridiplantae,+Glaucocystophyceae
+!complex:+Cryptophyta,+Haptophyceae,+Euglenida
+cyanobacteria:+Cyanobacteria
+excavates:+Euglenozoa,-Euglenida,+Fornicata,+Heterolobosea
+apusozoa:+Apusozoa
+unikonta:+Amoebozoa,+Opisthokonta
+bacteria:+Bacteria,-Cyanobacteria
