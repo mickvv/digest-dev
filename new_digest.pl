@@ -11,6 +11,7 @@ use File::Basename;
 use File::Find::Rule;
 use Path::Class 'file', 'dir';
 use List::AllUtils 'max', 'firstidx';
+use Statistics::Descriptive;
 
 use Bio::MUST::Core;
 use aliased 'Bio::MUST::Core::Ali';
@@ -90,9 +91,9 @@ for my $file (sort @blast_reports) {
 
         my $query_id = $hit->query_id;
         my $hit_id   = $hit->hit_id;
-        ### $query_id
-        ### $hit_id
-        ### eval: $hit->evalue
+#        ### $query_id
+#        ### $hit_id
+#        ### eval: $hit->evalue
         
         # skip when hit is myself    
         my ( $query_taxid, $hit_taxid ) = map { $_->taxon_id } 
@@ -158,20 +159,41 @@ for my $file (sort @blast_reports) {
 
     # Write table for the best scoring hits
     open my $out_delta, '>', $outfile_delta;
+    say {$out_delta} join "\t", '#query_id', 'delta-' . $ARGV_delta_mode , 'group_1', 'group_2';
+
+    QUERY_ID:
     for my $query_id (keys %best_hit_for) {
+
+        my @groups;
+        my @perc_ids_a;
+        my @perc_ids_b;
+
         HIT_ID:
         for my $hit_taxid (keys %{ $best_hit_for{$query_id} }) {
 
             my $group  = $best_hit_for{$query_id}{$hit_taxid}{group};
+            
+            # skip unconsidered groups
             next HIT_ID if $group =~ m/^!/xmsg;
+            # consider only 2 groups to compute delta
+            last HIT_ID if scalar @groups > 2;
 
+            push @groups, $group unless grep { $_ eq $group } @groups;    
+            ### @groups
+            
             my $hit_id = $best_hit_for{$query_id}{$hit_taxid}{hit_id};
             my $hit    = $best_hit_for{$query_id}{$hit_taxid}{hit};
+#            ### $hit
 
-	        my @hit_values = map { $hit-> $_ } qw(evalue percent_identity hsp_length);
-
-            say {$out_delta} join "\t", $query_id, @hit_values, $hit_id, $group;
+	        my ($perc_id, $hsp_len) = map { $hit-> $_ } qw(percent_identity hsp_length);
+            push @perc_ids_a, $perc_id if scalar @groups == 1;
+            push @perc_ids_b, $perc_id if scalar @groups == 2;
         }
+
+        my $delta = _comp_delta(\@perc_ids_a, \@perc_ids_b, $ARGV_delta_mode);
+        ### $delta
+
+        say {$out_delta} join "\t", $query_id, $delta, @groups[0], @groups[1] // 'NA'; 
     }
     close $out_delta;
 
@@ -181,9 +203,27 @@ for my $file (sort @blast_reports) {
 }
 ### Done processing all reports
 
-sub comp_delta { 
-   my ($a, $b) = @_;
-   return $a-$b; 
+sub _comp_delta { 
+    my ($a, $b, $mode) = @_;
+
+    if ($mode eq 'med') {
+        my $stat_a = Statistics::Descriptive::Full->new();
+        $stat_a->add_data(@$a); 
+        my $stat_b = Statistics::Descriptive::Full->new();
+        $stat_b->add_data(@$b); 
+
+        my $med_a = $stat_a->median();
+        my $med_b = $stat_b->median();
+        ### $med_a
+        ### $med_b
+
+        return $med_a - $med_b
+    }
+    else {
+#        ### a: @$a[0]
+#        ### b: @$b[0]
+        return @$a[0]-@$b[0]; 
+    }
 }
 
 =head1 NAME
@@ -235,6 +275,13 @@ Path to local NCBI taxonomy DB.
 
 =for Euclid:
     dir.type: string
+
+=item --delta[-mode]=<str>
+
+Use top hit or median to compute delta.
+
+=for Euclid:
+    str.type: str
 
 =item --filesdir=<dir>
 
