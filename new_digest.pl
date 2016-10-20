@@ -81,19 +81,17 @@ for my $file (sort @blast_reports) {
     my %best_for;
     tie my %best_hit_for, 'Tie::IxHash::Easy';
     tie my %low_hits_for, 'Tie::IxHash::Easy';
-#    my $curr_query;
-#    my $curr_org;
 
     # Parse table and store best hit for a query_org/hit_org pair in a hash
     # and the remaining low scoring hits in another hash
     HIT:
     while ( my $hit = $report->$method ) {
 
+        next HIT if $hit->hsp_length < $ARGV_hsp_length;
+        next HIT if $hit->evalue     > $ARGV_evalue;
+
         my $query_id = $hit->query_id;
         my $hit_id   = $hit->hit_id;
-#        ### $query_id
-#        ### $hit_id
-#        ### eval: $hit->evalue
         
         # skip when hit is myself    
         my ( $query_taxid, $hit_taxid ) = map { $_->taxon_id } 
@@ -101,6 +99,7 @@ for my $file (sort @blast_reports) {
                                           ;
         next if $query_taxid eq $hit_taxid;
      
+        # classify org accoording to config file
         my $group = $classifier->classify($hit_id) // 'others';
         
         unless ( $best_for{$query_id}{$hit_taxid} ) {
@@ -126,14 +125,16 @@ for my $file (sort @blast_reports) {
     
     # Write table for the best scoring hits
     open my $out_best, '>', $outfile_best;
+    say {$out_best} join "\t", '#query_id', 'evalue', 'percent_identity', 'bit_score', 'hsp_length', 'hit_id', 'group';
     for my $query_id (keys %best_hit_for) {
         for my $hit_taxid (keys %{ $best_hit_for{$query_id} }) {
 
             my $hit_id = $best_hit_for{$query_id}{$hit_taxid}{hit_id};
             my $group  = $best_hit_for{$query_id}{$hit_taxid}{group};
             my $hit    = $best_hit_for{$query_id}{$hit_taxid}{hit};
-
-	        my @hit_values = map { $hit-> $_ } qw(evalue percent_identity hsp_length);
+        
+	        my @hit_values = map { $hit-> $_ } qw(evalue percent_identity bit_score hsp_length);
+            ### @hit_values
 
             say {$out_best} join "\t", $query_id, @hit_values, $hit_id, $group;
         }
@@ -142,6 +143,7 @@ for my $file (sort @blast_reports) {
 
     # Write table for low scoring hits
     open my $out_lows, '>', $outfile_lows;
+    say {$out_lows} join "\t", '#query_id', 'evalue', 'percent_identity', 'bit_score', 'hsp_length', 'hit_id', 'group';
     for my $query_id (keys %low_hits_for) {
         for my $hit_taxid (keys %{ $low_hits_for{$query_id} }) {
             for my $hit_id (keys %{ $low_hits_for{$query_id}{$hit_taxid} }) {
@@ -149,7 +151,7 @@ for my $file (sort @blast_reports) {
                 my $group  = $low_hits_for{$query_id}{$hit_taxid}{$hit_id}{group};
                 my $hit    = $low_hits_for{$query_id}{$hit_taxid}{$hit_id}{hit}; 
 
-	            my @hit_values = map { $hit-> $_ } qw(evalue percent_identity hsp_length);
+	            my @hit_values = map { $hit-> $_ } qw(evalue percent_identity bit_score hsp_length);
 
                 say {$out_lows} join "\t", $query_id, @hit_values, $hit_id, $group;
             }
@@ -157,16 +159,16 @@ for my $file (sort @blast_reports) {
     }
     close $out_lows;
 
-    # Write table for the best scoring hits
+    # Write table for the computed deltas
     open my $out_delta, '>', $outfile_delta;
-    say {$out_delta} join "\t", '#query_id', 'delta-' . $ARGV_delta_mode , 'group_1', 'group_2';
+    say {$out_delta} join "\t", '#query_id', 'delta-' . $ARGV_delta_mode . "-$ARGV_score", 'group_1', 'group_2';
 
     QUERY_ID:
     for my $query_id (keys %best_hit_for) {
 
         my @groups;
-        my @perc_ids_a;
-        my @perc_ids_b;
+        my @values_a;
+        my @values_b;
 
         HIT_ID:
         for my $hit_taxid (keys %{ $best_hit_for{$query_id} }) {
@@ -179,21 +181,21 @@ for my $file (sort @blast_reports) {
             last HIT_ID if scalar @groups > 2;
 
             push @groups, $group unless grep { $_ eq $group } @groups;    
-            ### @groups
+#            ### @groups
             
             my $hit_id = $best_hit_for{$query_id}{$hit_taxid}{hit_id};
             my $hit    = $best_hit_for{$query_id}{$hit_taxid}{hit};
 #            ### $hit
 
-	        my ($perc_id, $hsp_len) = map { $hit-> $_ } qw(percent_identity hsp_length);
-            push @perc_ids_a, $perc_id if scalar @groups == 1;
-            push @perc_ids_b, $perc_id if scalar @groups == 2;
+	        my ($value, $hsp_len) = map { $hit-> $_ } $ARGV_score, qw(hsp_length);
+            push @values_a, $value if scalar @groups == 1;
+            push @values_b, $value if scalar @groups == 2;
         }
 
-        my $delta = _comp_delta(\@perc_ids_a, \@perc_ids_b, $ARGV_delta_mode);
+        my $delta = _comp_delta(\@values_a, \@values_b, $ARGV_delta_mode);
         ### $delta
 
-        say {$out_delta} join "\t", $query_id, $delta, @groups[0], @groups[1] // 'NA'; 
+        say {$out_delta} join "\t", $query_id, $delta, $groups[0], $groups[1] // 'NA'; 
     }
     close $out_delta;
 
@@ -213,7 +215,7 @@ sub _comp_delta {
         $stat_b->add_data(@$b); 
 
         my $med_a = $stat_a->median();
-        my $med_b = $stat_b->median();
+        my $med_b = $stat_b->median() // 0;
         ### $med_a
         ### $med_b
 
@@ -242,6 +244,13 @@ new_digest.pl --report-dir=<dir> --otu[-file]=<file> --taxdir=<dir>
 
 =over
 
+=item --taxdir=<dir>
+
+Path to local NCBI taxonomy DB.
+
+=for Euclid:
+    dir.type: string
+
 =item --reports=<dir>
 
 Path to blast reports.
@@ -263,18 +272,18 @@ Path to artificial groups' file (user defined).
 =for Euclid:
     file.type: string
 
+=item --score=<str>
+
+Choose either percent_identity or bit_score to compute delta
+
+=for Euclid:
+    str.type: str
+
 =back
 
 =head1 OPTIONAL ARGUMENTS
 
 =over
-
-=item --taxdir=<dir>
-
-Path to local NCBI taxonomy DB.
-
-=for Euclid:
-    dir.type: string
 
 =item --delta[-mode]=<str>
 
@@ -282,46 +291,23 @@ Use top hit or median to compute delta.
 
 =for Euclid:
     str.type: str
+    str.default: qw(top)
 
-=item --filesdir=<dir>
+=item --hsp[-length]=<int>
 
-Path to ali files directory.
-
-=for Euclid:
-    dir.type: string
-
-=item --namesfile=<file>
-
-Path to ali files directory.
+Filter hits according to a min hsp length.
 
 =for Euclid:
- 
-=item --gca-mapper=<file>
+    int.type: int
+    int.default: 0
 
-Path to ali files directory.
+=item --evalue=<num>
+
+Filter hits according to a threshold e-value.
 
 =for Euclid:
-    file.type: string
+    num.type: number
+    num.default: 1e-10
 
-=item --user=<num>
-
-User identifier. 
-
-    00, Mick VV
-    01, Denis B
-    02, Richard G
-    03, Léonard R
-    04, Di Franco A
-    ...
     
-=for Euclid:
-    num.type: int
-
-=item --count=<num>
-
-Last defined user taxid. Number from which to start count for new user taxids.
-
-=for Euclid:
-    num.type: int
-
 =back
