@@ -1,4 +1,5 @@
-!sar:+Stramenopiles,+Alveolata,+Rhizaria
+!!stramenopiles:+Stramenopiles
+!ar:+Alveolata,+Rhizaria
 !plantae:+Rhodophyta,+Viridiplantae,+Glaucocystophyceae
 !complex:+Cryptophyta,+Haptophyceae,+Euglenida
 cyanobacteria:+Cyanobacteria

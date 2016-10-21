@@ -134,7 +134,7 @@ for my $file (sort @blast_reports) {
             my $hit    = $best_hit_for{$query_id}{$hit_taxid}{hit};
         
 	        my @hit_values = map { $hit-> $_ } qw(evalue percent_identity bit_score hsp_length);
-            ### @hit_values
+#            ### @hit_values
 
             say {$out_best} join "\t", $query_id, @hit_values, $hit_id, $group;
         }
@@ -161,7 +161,7 @@ for my $file (sort @blast_reports) {
 
     # Write table for the computed deltas
     open my $out_delta, '>', $outfile_delta;
-    say {$out_delta} join "\t", '#query_id', 'delta-' . $ARGV_delta_mode . "-$ARGV_score", 'group_1', 'group_2';
+    say {$out_delta} join "\t", '#query_id', 'delta-' . $ARGV_delta_mode . "-$ARGV_score", 'group_0', 'group_1', 'group_2';
 
     QUERY_ID:
     for my $query_id (keys %best_hit_for) {
@@ -169,22 +169,25 @@ for my $file (sort @blast_reports) {
         my @groups;
         my @values_a;
         my @values_b;
+        my @group_zero;
 
         HIT_ID:
         for my $hit_taxid (keys %{ $best_hit_for{$query_id} }) {
 
+            my $hit_id = $best_hit_for{$query_id}{$hit_taxid}{hit_id};
             my $group  = $best_hit_for{$query_id}{$hit_taxid}{group};
+            my $hit    = $best_hit_for{$query_id}{$hit_taxid}{hit};
+        
+            push @group_zero, $hit->$ARGV_score if $group =~ m/^!+/xmsg;
+            ### @group_zero
             
             # skip unconsidered groups
-            next HIT_ID if $group =~ m/^!/xmsg;
+            next HIT_ID if $group =~ m/^!/xms;
             # consider only 2 groups to compute delta
             last HIT_ID if scalar @groups > 2;
 
             push @groups, $group unless grep { $_ eq $group } @groups;    
-#            ### @groups
-            
-            my $hit_id = $best_hit_for{$query_id}{$hit_taxid}{hit_id};
-            my $hit    = $best_hit_for{$query_id}{$hit_taxid}{hit};
+            ### @groups
 #            ### $hit
 
 	        my ($value, $hsp_len) = map { $hit-> $_ } $ARGV_score, qw(hsp_length);
@@ -192,10 +195,16 @@ for my $file (sort @blast_reports) {
             push @values_b, $value if scalar @groups == 2;
         }
 
+        # compute median for group zero i.e. queries' group
+        my $stat_zero = Statistics::Descriptive::Full->new();
+        $stat_zero->add_data(@group_zero); 
+        my $med_zero = $stat_zero->median();
+        ### $med_zero
+
         my $delta = _comp_delta(\@values_a, \@values_b, $ARGV_delta_mode);
         ### $delta
 
-        say {$out_delta} join "\t", $query_id, $delta, $groups[0], $groups[1] // 'NA'; 
+        say {$out_delta} join "\t", $query_id, $delta, $med_zero, $groups[0], $groups[1] // 'NA'; 
     }
     close $out_delta;
 
