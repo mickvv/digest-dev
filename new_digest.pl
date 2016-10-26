@@ -227,13 +227,13 @@ sub _comp_delta {
         my $med_b = $stat_b->median() // 0;
         ### $med_a
         ### $med_b
-
-        return $med_a - $med_b
+     
+        return sprintf "%.2f", $med_a - $med_b;
     }
     else {
 #        ### a: @$a[0]
 #        ### b: @$b[0]
-        return @$a[0]-@$b[0]; 
+        return sprintf "%.2f", @$a[0]-@$b[0]; 
     }
 }
 
