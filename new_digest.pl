@@ -3,7 +3,7 @@
 use Modern::Perl '2011';
 use autodie;
 
-use Smart::Comments;
+use Smart::Comments '###';
 use Getopt::Euclid qw( :vars );
 
 use Tie::IxHash::Easy;
@@ -27,7 +27,6 @@ use aliased 'Bio::MUST::Core::Taxonomy::Category';
 use aliased 'Bio::MUST::Core::Taxonomy::Classifier';
 
 
-
 # build taxonomy objects
 my $tax = Taxonomy->new( tax_dir => $ARGV_taxdir );
 
@@ -39,12 +38,9 @@ my @categories;
 
 while ( my $line = <$in> ) {    
     chomp $line;
-    ### $line
     my ($label, $otu) = split ':', $line;
-    my $list = IdList->new( ids => [ split ',', $otu ] );
-    ### $label
-    ### $otu
-    ### $list
+
+    my $list      = IdList->new( ids => [ split ',', $otu ] );
     my $filter    = $tax->tax_filter( $list );
     my $criterion = Criterion->new( tax_filter => $filter );
     my $category  = Category->new(
@@ -58,21 +54,9 @@ my $classifier = Classifier->new( categories => \@categories );
 ### $classifier
 
 
-
-### Processing: $ARGV_reports
-
-my $blast_suffix = qr{\. $ARGV_suffix \z}xmsi;
-
-my @blast_reports = File::Find::Rule
-    ->file()
-    ->name($blast_suffix)
-    ->maxdepth(1) 
-    ->in($ARGV_reports)
-;
-### @blast_reports
-
 ### Processing blast reports...
-for my $file (sort @blast_reports) {
+#for my $file (sort @blast_reports) {
+for my $file (@ARGV_infiles) {
     ### Processing: $file
 
     my $report = Table->new( file => file($file) );
@@ -87,8 +71,9 @@ for my $file (sort @blast_reports) {
     HIT:
     while ( my $hit = $report->$method ) {
 
+        next HIT if $hit->evalue > $ARGV_evalue;
         next HIT if $hit->hsp_length < $ARGV_hsp_length;
-        next HIT if $hit->evalue     > $ARGV_evalue;
+        next HIT if $hit->percent_identity < $ARGV_perc_id;
 
         my $query_id = $hit->query_id;
         my $hit_id   = $hit->hit_id;
@@ -99,7 +84,7 @@ for my $file (sort @blast_reports) {
                                           ;
         next if $query_taxid eq $hit_taxid;
      
-        # classify org accoording to config file
+        # classify org according to config file
         my $group = $classifier->classify($hit_id) // 'others';
         
         unless ( $best_for{$query_id}{$hit_taxid} ) {
@@ -161,7 +146,7 @@ for my $file (sort @blast_reports) {
 
     # Write table for the computed deltas
     open my $out_delta, '>', $outfile_delta;
-    say {$out_delta} join "\t", '#query_id', 'delta-' . $ARGV_delta_mode . "-$ARGV_score", 'group_0', 'group_1', 'group_2';
+    say {$out_delta} join "\t", '#query_id', 'delta-' . $ARGV_delta_mode . "-$ARGV_score", 'group_0-med', 'group_1', 'group_2';
 
     QUERY_ID:
     for my $query_id (keys %best_hit_for) {
@@ -204,7 +189,7 @@ for my $file (sort @blast_reports) {
         my $delta = _comp_delta(\@values_a, \@values_b, $ARGV_delta_mode);
         ### $delta
 
-        say {$out_delta} join "\t", $query_id, $delta, $med_zero, $groups[0], $groups[1] // 'NA'; 
+        say {$out_delta} join "\t", $query_id, $delta, $med_zero, $groups[0] // 'NA', $groups[1] // 'NA'; 
     }
     close $out_delta;
 
@@ -253,26 +238,20 @@ new_digest.pl --report-dir=<dir> --otu[-file]=<file> --taxdir=<dir>
 
 =over
 
+=item <infiles>
+
+Path to input report files [repeatable argument].
+
+=for Euclid: 
+    infiles.type: readable
+    repeatable
+
 =item --taxdir=<dir>
 
 Path to local NCBI taxonomy DB.
 
 =for Euclid:
     dir.type: string
-
-=item --reports=<dir>
-
-Path to blast reports.
-
-=for Euclid:
-    dir.type: string
-
-=item --suffix=<str>
-
-BLAST reports file extension.
-
-=for Euclid:
-    str.type: string
 
 =item --otu[-file]=<file>
 
@@ -312,11 +291,18 @@ Filter hits according to a min hsp length.
 
 =item --evalue=<num>
 
-Filter hits according to a threshold e-value.
+Filter hits according to an e-value threshold.
 
 =for Euclid:
     num.type: number
     num.default: 1e-10
 
+=item --perc-id=<int>
+
+Filter hits according to a percent_identity threshold.
+ 
+=for Euclid:
+    int.type: int
+    int.default: 0
     
 =back
